@@ -20,6 +20,7 @@ struct Queue {
     struct node* head;
 };
 
+// Method for queuing cacheLines
 void queue(struct CacheLine* cacheLine, struct node* node, struct Queue* q) {
 
     if (node != NULL) {
@@ -32,6 +33,7 @@ void queue(struct CacheLine* cacheLine, struct node* node, struct Queue* q) {
     }
 }
 
+// Method for dequeuing cacheLines
 struct CacheLine* dequeue(struct Queue* q) {
     if (q->head != NULL) {
         struct node* node = q->head;
@@ -43,6 +45,7 @@ struct CacheLine* dequeue(struct Queue* q) {
     return NULL;
 }
 
+//FIFO Algorithm for cachline replacement, first in, first replaced
 int fifo(struct addressBlock* address, const struct CacheStructure* cache, struct Queue* q) {
     if (address->set > cache->sets) {
         printf("Memory Address is greater than Cache Address");
