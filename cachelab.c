@@ -11,6 +11,88 @@
 #include "cachelab.h"
 // more libraries if needed for your program
 
+struct node {
+    struct CacheLine* cacheLine;
+    struct node* next;
+};
+
+struct Queue {
+    struct node* head;
+};
+
+void queue(struct CacheLine* cacheLine, struct node* node, struct Queue* q) {
+
+    if (node != NULL) {
+        if (node->next != NULL) queue(cacheLine, node->next, q);
+        else {
+            node->next = malloc(sizeof(struct node));
+            node->next = NULL;
+            node->cacheLine = cacheLine;
+        }
+    }
+}
+
+struct CacheLine* dequeue(struct Queue* q) {
+    if (q->head != NULL) {
+        struct node* node = q->head;
+        struct CacheLine* cacheLine = node->cacheLine;
+        q->head = q->head->next;
+        free(node);
+        return cacheLine;
+    }
+    return NULL;
+}
+
+int fifo(struct addressBlock* address, const struct CacheStructure* cache, struct Queue* q) {
+    if (address->set > cache->sets) {
+        printf("Memory Address is greater than Cache Address");
+        return 0;
+    }
+    int hasMissed = 1;
+    // Checks if cache exists
+    for (int line = 0; line < cache->lines; line++) {
+        struct CacheLine* cacheLine = *(*(cache->cacheLines + address->set) + line);
+        if (address->tag == cacheLine->tag && cacheLine->validBit == 1) {
+            // if miss and last line in the set
+            hasMissed = 0;
+        }
+    }
+
+    // Has hit
+    if (hasMissed == 0) {
+        printf("H\n");
+        return 1;
+    }
+
+    q->head = malloc(sizeof(struct node));
+    q->head->cacheLine = malloc(sizeof(struct CacheLine));
+    q->head->next = malloc(sizeof(struct node));
+    q->head->next = NULL;
+
+
+    // if missed
+    // first check if there are any empty lines in the set
+    struct CacheLine** lines_in_address_set = *(cache->cacheLines + address->set);
+    for (int line = 0; line < cache->lines; line++) {
+        struct CacheLine* cacheLine = *(lines_in_address_set + line);
+        if (cacheLine->validBit == 0) {
+            cacheLine->validBit = 1;
+            cacheLine->tag = address->tag;
+
+            queue(cacheLine, q->head, q);
+
+            printf("M\n");
+            return -1;
+        }
+    }
+
+    // if none empty, then replacement
+    struct CacheLine* cacheLine = dequeue(q);
+    cacheLine->tag = address->tag;
+    printf("M\n");
+    return -1;
+}
+
 // print result of cache simulation showing hit number, miss number, miss rate, and total running time
 void printResult(int hits, int misses, int missRate, int runTime) {
     printf("[result] hits: %d misses: %d miss rate: %d%% total running time: %d cycle\n",hits, misses, missRate, runTime);
@@ -178,7 +260,7 @@ int main(int argc, char** argv) {
     }
     // Debugging quick variables in the IDE
     else {
-        m = 64; s = 4; e = 0; b = 4; i = "testcase"; r = "lru";
+        m = 64; s = 4; e = 0; b = 4; i = "address01"; r = "fifo";
     }
     struct file* file = loadFile(i);
     struct CacheStructure* cache = buildCache(m, s, e, b);
@@ -195,6 +277,7 @@ int main(int argc, char** argv) {
 //    }
     //printf("\n");
     //printf("Hex Mem\tBinary Mem\tAddr\tTarget\t\tStarting Cache\t\tTargeted Cache\n");
+    struct Queue* q;
     int misses = 0;
     int hits = 0;
     for (int k = 0; k < file->length; k++) {
@@ -207,6 +290,12 @@ int main(int argc, char** argv) {
             if (returnVal == -1) misses ++;
             else hits ++;
         }
+        if (strcmp(r, "fifo") == 0 || strcmp(r, "FIFO") == 0) {
+            q = malloc(sizeof(struct Queue));
+            int returnVal = fifo(addressBlock, cache, q);
+            if (returnVal == -1) misses++;
+            else hits ++;
+        }
     }
     double missRate = ( (double) misses / file->length) ;
     double averageAccessTime = (HIT_TIME + MISS_PENALTY * missRate) ;
@@ -215,6 +304,9 @@ int main(int argc, char** argv) {
     free(file);
     freeCache(cache);
     free(addressBlock);
+    if (strcmp(r, "fifo") == 0 || strcmp(r, "FIFO") == 0) {
+        free(q);
+    }
     return 0;
 }
 // GOOD LUCK!
