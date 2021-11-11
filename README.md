@@ -1,6 +1,15 @@
 # Cache Simulation
 Cache simulator written in C.
 
+flags
+-
+- <b>m</b> : cache size <br>
+- <b>s</b> : cache sets <br>
+- <b>e</b> : direct mapped cache lines(0), multi-way cache lines (>0) <br>
+- <b>b</b> : cache memory size <br>
+- <b>i</b> : file name { address01, address02, address03 } <br>
+- <b>r</b> : algorithm { lru, fifo } <br>
+
 Least Recently Used Algorithm for cache replacement:
 
 ```./cachelab -m 32 -s 2 -e 0 -b 2 -i address03 -r lru```
