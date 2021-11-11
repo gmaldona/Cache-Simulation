@@ -22,31 +22,38 @@ struct Queue {
 
 // Method for queuing cacheLines
 void queue(struct CacheLine* cacheLine, struct node* node, struct Queue* q) {
+    if (q->head==NULL) {
+        q->head = malloc(sizeof(struct node));
+        q->head->cacheLine = malloc(sizeof(struct CacheLine));
+        q->head->cacheLine = cacheLine;
+        q->head->next = NULL;
+        return;
+    }
 
     if (node != NULL) {
         if (node->next != NULL) queue(cacheLine, node->next, q);
         else {
             node->next = malloc(sizeof(struct node));
-            node->next = NULL;
-            node->cacheLine = cacheLine;
+            node->next->cacheLine = cacheLine;
+            node->next->next = NULL;
         }
     }
 }
 
 // Method for dequeuing cacheLines
 struct CacheLine* dequeue(struct Queue* q) {
+
     if (q->head != NULL) {
         struct node* node = q->head;
         struct CacheLine* cacheLine = node->cacheLine;
         q->head = q->head->next;
-        free(node);
         return cacheLine;
     }
     return NULL;
 }
 
 //FIFO Algorithm for cachline replacement, first in, first replaced
-int fifo(struct addressBlock* address, const struct CacheStructure* cache, struct Queue* q) {
+int fifo(struct addressBlock* address, const struct CacheStructure* cache) {
     if (address->set > cache->sets) {
         printf("Memory Address is greater than Cache Address");
         return 0;
@@ -66,32 +73,26 @@ int fifo(struct addressBlock* address, const struct CacheStructure* cache, struc
         printf("H\n");
         return 1;
     }
-
-    q->head = malloc(sizeof(struct node));
-    q->head->cacheLine = malloc(sizeof(struct CacheLine));
-    q->head->next = malloc(sizeof(struct node));
-    q->head->next = NULL;
-
-
     // if missed
     // first check if there are any empty lines in the set
-    struct CacheLine** lines_in_address_set = *(cache->cacheLines + address->set);
-    for (int line = 0; line < cache->lines; line++) {
-        struct CacheLine* cacheLine = *(lines_in_address_set + line);
-        if (cacheLine->validBit == 0) {
-            cacheLine->validBit = 1;
-            cacheLine->tag = address->tag;
-
-            queue(cacheLine, q->head, q);
-
-            printf("M\n");
-            return -1;
-        }
+     struct CacheLine** lines_in_address_set = *(cache->cacheLines + address->set);
+     for (int line = 0; line < cache->lines; line++) {
+         struct CacheLine* cacheLine = *(lines_in_address_set + line);
+         if (cacheLine->validBit == 0) {
+             cacheLine->validBit = 1;
+             cacheLine->tag = address->tag;
+             struct Queue* setQueue = *(cache->setQueues + address->set);
+             queue(cacheLine, setQueue->head, setQueue);
+             printf("M\n");
+             return -1;
+         }
     }
 
     // if none empty, then replacement
-    struct CacheLine* cacheLine = dequeue(q);
+    struct Queue* setQueue = *(cache->setQueues + address->set);
+    struct CacheLine* cacheLine = dequeue(setQueue);
     cacheLine->tag = address->tag;
+    queue(cacheLine, setQueue->head, setQueue);
     printf("M\n");
     return -1;
 }
@@ -126,6 +127,15 @@ int lru(struct addressBlock* address, const struct CacheStructure* cache) {
         if (address->tag == cacheLine->tag && cacheLine->validBit == 1) {
             // if miss and last line in the set
             hasMissed = 0;
+            cacheLine->LRUCounter =-1;
+        }
+    }
+
+    for (int set = 0; set < cache->sets; set++) {
+        for (int line = 0; line < cache->lines; line++) {
+            struct CacheLine* cacheLine = *(*(cache->cacheLines + set) + line);
+            if (cacheLine->validBit == 1)
+                cacheLine->LRUCounter ++;
         }
     }
 
@@ -144,60 +154,68 @@ int lru(struct addressBlock* address, const struct CacheStructure* cache) {
             cacheLine->validBit = 1;
             cacheLine->tag = address->tag;
             cacheLine->LRUCounter = 1;
-            *(cache->LRUSetCounter + address->set) = 1;
             printf("M\n");
             return -1;
         }
     }
 
-    // No empty in set, look for a replacement
-    int LRUSet = 0;
-    for (int set = 0; set < cache->sets; set ++) {
-        if (*(cache->LRUSetCounter + set) > LRUSet ) LRUSet = set;
+    int lruIndex = 0;
+    for (int i = 0; i < cache->lines; i++) {
+        struct CacheLine* cacheLine = *(lines_in_address_set + i);
+        struct CacheLine* prev_cacheLine = *(lines_in_address_set + lruIndex);
+        if (cacheLine->LRUCounter >= prev_cacheLine->LRUCounter) lruIndex = i;
     }
-    // loop through all the lines in the LRUSet and find the LRULine
-    struct CacheLine** LRUSetLines = *(cache->cacheLines + LRUSet);
-    int LRULine = 0;
-    for (int line = 0; line < cache->lines; line++) {
-        struct CacheLine* cacheLine = *(*(cache->cacheLines + LRUSet) + line);
-        if ( cacheLine->LRUCounter > LRULine) LRULine = line;
-    }
-    // update old cache with new cache
-    struct CacheLine* LRUCacheLine = *(*(cache->cacheLines + LRUSet) + LRULine);
+
+    struct CacheLine* LRUCacheLine = *(*(cache->cacheLines + address->set) + lruIndex);
     LRUCacheLine->tag = address->tag;
     LRUCacheLine->LRUCounter = 0;
-    printf("M\n") ;
+    printf("M\n");
     return -1;
 }
 
 // Parses the binary address into a struct to ease of use
 struct addressBlock* getAddressBlock(const char* address, const struct CacheStructure* cache) {
     // address is a bit vector of length 1 + s + b
-
     struct addressBlock* addressBlock = malloc(sizeof(struct addressBlock));
 
     int setBits = cache->s;
     int blockBits = cache->b;
     int tagBits = ((int) strlen(address)) - blockBits - setBits ;
 
+    // Parsing tag bits
     char* tagBuffer = malloc(sizeof(char) * tagBits);
     for (int k = 0; k < tagBits; k++) {
         *(tagBuffer + k) = *(address + k);
     }
-    addressBlock->tag = binaryToDecimal(tagBuffer);
+    char* tag = malloc(sizeof(char) * tagBits);
+    strncpy(tag, tagBuffer, tagBits + 1);
+    *(tag + tagBits) = '\0';
+    //printf("tag: %s\t", tag);
+    addressBlock->tag = binaryToDecimal(tag);
 
+    // Parsing Set Bits
     char* setBuffer = malloc(sizeof(char) * setBits);
     for (int k = tagBits; k < tagBits + setBits; k++) {
         *(setBuffer + k - tagBits) = *(address + k);
     }
-    addressBlock->set = binaryToDecimal(setBuffer);
+    char* set = malloc(sizeof(char) * setBits);
+    strncpy(set, setBuffer, setBits);
+    *(set + setBits) = '\0';
+    //printf("set: %s\t", set);
+    addressBlock->set = binaryToDecimal(set);
 
-    char* blockOffsetBuffer = malloc(sizeof(char) * blockBits);
+    // Parsing Block Bits
+    char* blockOffsetBuffer = malloc(sizeof(char) * blockBits + 1);
     for (int k = tagBits + setBits; k < tagBits + setBits + blockBits; k++) {
         *(blockOffsetBuffer + k - tagBits - setBits) = *(address + k);
     }
+    char* offset = malloc(sizeof(char) * blockBits);
+    strncpy(offset, blockOffsetBuffer, blockBits);
+    *(offset + blockBits) = '\0';
+    //printf("offset: %s\t", offset); 
     addressBlock->blockOffset = binaryToDecimal(blockOffsetBuffer);
 
+    //printf("%d %d %d\t", addressBlock->tag, addressBlock->set, addressBlock->blockOffset);
     return addressBlock;
 }
 
@@ -211,12 +229,12 @@ struct CacheStructure* buildCache(int m, int s, int e, int b) {
     cacheStructure->blockSize = (int) pow(2, b);
     cacheStructure->totalSize = cacheStructure->sets * cacheStructure->lines * cacheStructure->blockSize;
     cacheStructure->cacheLines = malloc(sizeof(struct CacheLine**) * cacheStructure->sets);
-    cacheStructure->LRUSetCounter = malloc(sizeof(int) * cacheStructure->sets);
     for (int k = 0; k < cacheStructure->sets; k++) {
         *(cacheStructure->cacheLines + k) = malloc(sizeof(struct CacheLine*) * cacheStructure->lines);
-        *(cacheStructure->LRUSetCounter + k) = 0;
-        for (int j = 0; j < cacheStructure->lines + 1; j++) {
+        for (int j = 0; j < cacheStructure->lines ; j++) {
             *(*(cacheStructure->cacheLines + k) + j) = malloc(sizeof(struct CacheLine));
+	    struct CacheLine* cacheLine = *(*(cacheStructure->cacheLines + k) + j);
+	    cacheLine->validBit = 0; 
         }
     }
      return cacheStructure;
@@ -256,46 +274,44 @@ int main(int argc, char** argv) {
                         break;
                     } else return -1;
                 default:
-                    printf("Wrong arguments... \n");
+                    printf("Wrong arguments... exiting\n");
                     return -1;
             }
         }
     }
     // Debugging quick variables in the IDE
     else {
-        m = 64; s = 4; e = 0; b = 4; i = "address01"; r = "fifo";
+        m = 32; s = 2; e = 1; b = 3; i = "address02"; r = "fifo";
+    }
+    if (m == 0 || s == 0 || b == 0 || i == NULL) {
+        printf("Wrong arguments... exiting\n");
+        exit(1);
     }
     struct file* file = loadFile(i);
     struct CacheStructure* cache = buildCache(m, s, e, b);
     struct addressBlock* addressBlock;
 
-//    printf("\n\t\ttag - set - blockOffset\n");
-//    printf("\nCache Sets\n");
-//    for (int j = 0; j < cache->sets; j++) {
-//        for (int k = 0; k < e + 1; k++) {
-//            struct CacheLine* cacheLine = *(*(cache->cacheLines + j)+k);
-//            printf("(%d, %d)   %p\t",j, k, cacheLine);
-//        }
-//        printf("\n");
-//    }
-    //printf("\n");
-    //printf("Hex Mem\tBinary Mem\tAddr\tTarget\t\tStarting Cache\t\tTargeted Cache\n");
-    struct Queue* q;
     int misses = 0;
     int hits = 0;
+    cache->setQueues = malloc(sizeof(struct Queue*) * cache->sets);
+    for (int set = 0; set < cache->sets; set++) {
+        *(cache->setQueues + set) = malloc(sizeof(struct Queue));
+        struct Queue* queue = *(cache->setQueues + set);
+        queue->head =NULL;
+    }
     for (int k = 0; k < file->length; k++) {
         printf("%s\t",*(file->content + k));
         char* binary = hexToBinary( *(file->content + k) );
         //printf("%s\t", binary);
         addressBlock = getAddressBlock(binary, cache);
-        if (strcmp(r, "lru") == 0 || strcmp(r, "LRU") == 0) {
+	    //printf("%d %d %d\t", addressBlock->tag, addressBlock->set, addressBlock->blockOffset);
+        if  (strcmp(r, "lru") == 0 || strcmp(r, "LRU") == 0) {
             int returnVal = lru(addressBlock, cache);
             if (returnVal == -1) misses ++;
             else hits ++;
         }
-        if (strcmp(r, "fifo") == 0 || strcmp(r, "FIFO") == 0) {
-            q = malloc(sizeof(struct Queue));
-            int returnVal = fifo(addressBlock, cache, q);
+        else if (strcmp(r, "fifo") == 0 || strcmp(r, "FIFO") == 0) {
+            int returnVal = fifo(addressBlock, cache);
             if (returnVal == -1) misses++;
             else hits ++;
         }
@@ -308,7 +324,6 @@ int main(int argc, char** argv) {
     freeCache(cache);
     free(addressBlock);
     if (strcmp(r, "fifo") == 0 || strcmp(r, "FIFO") == 0) {
-        free(q);
     }
     return 0;
 }
